@@ -36,6 +36,42 @@ const TOLERANCIA: f64 = 0.15;
 /// Iteraciones seguidas sin mejorar el peor desvío que cortan el balance.
 const PACIENCIA: usize = 8;
 
+/// Divide la caja de la figura en `filas` × `columnas` Piezas iguales,
+/// numeradas por filas de izquierda a derecha (1..=filas × columnas). Lo que
+/// es fondo en la Máscara sigue siendo `FONDO`.
+pub fn cuadricula(mascara: &Mascara, filas: usize, columnas: usize) -> Etiquetas {
+    assert!(
+        filas >= 1 && columnas >= 1,
+        "cuadricula: filas y columnas deben ser >= 1"
+    );
+    let (ancho, alto) = (mascara.ancho, mascara.alto);
+    let mut datos = vec![FONDO; ancho * alto];
+    // Caja (x0, y0, x1, y1) de la figura, con x1 e y1 excluidos.
+    let caja = (0..ancho * alto).filter(|&i| mascara.datos[i]).fold(
+        None,
+        |c: Option<(usize, usize, usize, usize)>, i| {
+            let (x, y) = (i % ancho, i / ancho);
+            Some(c.map_or((x, y, x + 1, y + 1), |c| {
+                (c.0.min(x), c.1.min(y), c.2.max(x + 1), c.3.max(y + 1))
+            }))
+        },
+    );
+    let Some((x0, y0, x1, y1)) = caja else {
+        return Etiquetas { ancho, alto, datos };
+    };
+    let (w, h) = (x1 - x0, y1 - y0);
+    for y in y0..y1 {
+        let fila = (y - y0) * filas / h;
+        for x in x0..x1 {
+            if mascara.get(x, y) {
+                let columna = (x - x0) * columnas / w;
+                datos[y * ancho + x] = (fila * columnas + columna + 1) as u16;
+            }
+        }
+    }
+    Etiquetas { ancho, alto, datos }
+}
+
 /// Divide la figura en `piezas` Piezas conexas de área pareja. La misma
 /// `semilla` produce siempre la misma Variante.
 pub fn particionar(mascara: &Mascara, piezas: usize, semilla: u64) -> Etiquetas {
@@ -349,6 +385,34 @@ fn asegurar_conexidad(etiquetas: &mut [u16], ancho: usize, alto: usize) {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn cuadricula_reparte_la_caja_en_celdas_iguales() {
+        // Figura de 12 × 6 a 2 px del borde: 2 filas × 3 columnas de 4 × 3.
+        let m = Mascara::rectangulo(12, 6, 2, 0.0);
+        let e = cuadricula(&m, 2, 3);
+        for y in 0..e.alto {
+            for x in 0..e.ancho {
+                let esperado = if (2..14).contains(&x) && (2..8).contains(&y) {
+                    ((y - 2) / 3 * 3 + (x - 2) / 4 + 1) as u16
+                } else {
+                    FONDO
+                };
+                assert_eq!(e.get(x, y), esperado, "({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn cuadricula_respeta_el_fondo_de_las_esquinas_redondeadas() {
+        let m = Mascara::rectangulo(40, 40, 1, 12.0);
+        let e = cuadricula(&m, 2, 2);
+        assert_eq!(e.get(1, 1), FONDO);
+        assert_eq!(e.get(30, 1), 2);
+        assert_eq!(e.get(1, 30), 3);
+        let etiquetas: BTreeSet<u16> = e.datos.iter().copied().collect();
+        assert_eq!(etiquetas, BTreeSet::from([FONDO, 1, 2, 3, 4]));
+    }
 
     fn forma(w: usize, h: usize, f: impl Fn(usize, usize) -> bool) -> Mascara {
         let mut m = Mascara::vacia(w, h);

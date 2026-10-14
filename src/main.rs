@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use montessori_puzzles::Parametros;
 use montessori_puzzles::mascara::{Formato, Ilustracion};
-use montessori_puzzles::rompecabezas::{exportar_svg, generar};
+use montessori_puzzles::rompecabezas::{MAX_LADO_CUADRICULA, exportar_svg, generar};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -42,6 +42,12 @@ struct Args {
     /// Con --rectangular, redondea las esquinas con este radio, en mm
     #[arg(long, requires = "rectangular")]
     radio_esquinas: Option<f64>,
+    /// Con --rectangular, Piezas en Cuadrícula: cantidad de filas (1-8)
+    #[arg(long, requires_all = ["rectangular", "columnas"], value_parser = clap::value_parser!(u32).range(1..=MAX_LADO_CUADRICULA as i64))]
+    filas: Option<u32>,
+    /// Con --rectangular, Piezas en Cuadrícula: cantidad de columnas (1-8)
+    #[arg(long, requires_all = ["rectangular", "filas"], value_parser = clap::value_parser!(u32).range(1..=MAX_LADO_CUADRICULA as i64))]
+    columnas: Option<u32>,
     /// Archivo SVG de salida
     #[arg(short = 'o', long)]
     salida: Option<PathBuf>,
@@ -95,6 +101,13 @@ fn main() -> Result<()> {
         radio_esquinas_mm: args
             .radio_esquinas
             .unwrap_or(Parametros::default().radio_esquinas_mm),
+        cuadricula: args.filas.is_some(),
+        filas: args
+            .filas
+            .map_or(Parametros::default().filas, |f| f as usize),
+        columnas: args
+            .columnas
+            .map_or(Parametros::default().columnas, |c| c as usize),
     };
     let r = generar(&ilustracion, &parametros)?;
     std::fs::write(&salida, exportar_svg(&r, &ilustracion))
@@ -154,6 +167,24 @@ mod tests {
             Args::try_parse_from(["x", "g.png", "--rectangular", "--radio-esquinas", "6"]).unwrap();
         assert_eq!((r.rectangular, r.radio_esquinas), (true, Some(6.0)));
         assert!(Args::try_parse_from(["x", "g.png", "--radio-esquinas", "6"]).is_err());
+        let c = Args::try_parse_from([
+            "x",
+            "g.png",
+            "--rectangular",
+            "--filas",
+            "3",
+            "--columnas",
+            "4",
+        ])
+        .unwrap();
+        assert_eq!((c.filas, c.columnas), (Some(3), Some(4)));
+        let falla = |extra: &[&str]| {
+            let args = ["x", "g.png"].iter().chain(extra);
+            Args::try_parse_from(args).is_err()
+        };
+        assert!(falla(&["--filas", "3", "--columnas", "4"]));
+        assert!(falla(&["--rectangular", "--filas", "3"]));
+        assert!(falla(&["--rectangular", "--filas", "9", "--columnas", "4"]));
         let d = Args::try_parse_from(["x"]).unwrap();
         assert_eq!(d.piezas as usize, Parametros::default().piezas);
     }

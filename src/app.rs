@@ -7,7 +7,7 @@ use eframe::egui;
 use montessori_puzzles::Parametros;
 use montessori_puzzles::geometria::Rect;
 use montessori_puzzles::mascara::{Ilustracion, rasterizar};
-use montessori_puzzles::rompecabezas::{Rompecabezas, exportar_svg, generar};
+use montessori_puzzles::rompecabezas::{MAX_LADO_CUADRICULA, Rompecabezas, exportar_svg, generar};
 use montessori_puzzles::vista::{aplanar, encuadrar, imagen_de_piezas};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -261,7 +261,6 @@ impl App {
 
         let p = &mut self.parametros;
         let d = Parametros::default();
-        deslizador(ui, "Piezas", &mut p.piezas, d.piezas, 2..=12, "");
         deslizador(
             ui,
             "Ancho",
@@ -297,6 +296,29 @@ impl App {
                 );
             });
         });
+        ui.separator();
+
+        // La Cuadrícula solo existe con Silueta rectangular. Deshabilitado,
+        // el selector muestra lo que se usa sin olvidar la elección.
+        let mut elegida = p.silueta_rectangular && p.cuadricula;
+        ui.add_enabled_ui(p.silueta_rectangular, |ui| {
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut elegida, false, "Irregulares");
+                ui.radio_value(&mut elegida, true, "En cuadrícula");
+            })
+            .response
+            .on_disabled_hover_text("La Cuadrícula necesita Silueta rectangular");
+        });
+        if p.silueta_rectangular {
+            p.cuadricula = elegida;
+        }
+        if p.silueta_rectangular && p.cuadricula {
+            let lados = 1..=MAX_LADO_CUADRICULA;
+            deslizador(ui, "Filas", &mut p.filas, d.filas, lados.clone(), "");
+            deslizador(ui, "Columnas", &mut p.columnas, d.columnas, lados, "");
+        } else {
+            deslizador(ui, "Piezas", &mut p.piezas, d.piezas, 2..=12, "");
+        }
         deslizador(
             ui,
             "Pestaña",

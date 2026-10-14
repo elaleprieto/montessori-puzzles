@@ -5,7 +5,7 @@ use crate::bordes::extraer_bordes;
 use crate::geometria::{Punto, Rect, Trazo, largo, rectangulo_redondeado};
 use crate::mascara::Mascara;
 use crate::mascara::{Formato, Ilustracion, opciones_svg, rasterizar};
-use crate::particion::{Etiquetas, FONDO, particionar};
+use crate::particion::{self, Etiquetas, FONDO, particionar};
 use crate::pestana::{ParametrosPestana, con_pestana};
 use anyhow::{Result, bail};
 use resvg::usvg;
@@ -16,6 +16,8 @@ const LADO_MAX: usize = 800;
 const INTENTOS: u64 = 20;
 /// Una Unión más corta que esto (mm) no lleva Pestaña.
 const UNION_MIN_MM: f64 = 15.0;
+/// Máximo de filas y de columnas de una Cuadrícula.
+pub const MAX_LADO_CUADRICULA: usize = 8;
 /// Píxeles de fondo alrededor de la figura (además del Margen).
 const RELLENO_PX: usize = 2;
 /// Tamaño mínimo de una Pieza respecto del promedio.
@@ -104,7 +106,17 @@ pub struct Rompecabezas {
 
 /// Corre el pipeline completo.
 pub fn generar(ilustracion: &Ilustracion, p: &Parametros) -> Result<Rompecabezas> {
-    if !(2..=12).contains(&p.piezas) {
+    let cuadricula = p.silueta_rectangular && p.cuadricula;
+    if cuadricula {
+        if !(1..=MAX_LADO_CUADRICULA).contains(&p.filas)
+            || !(1..=MAX_LADO_CUADRICULA).contains(&p.columnas)
+        {
+            bail!("Las filas y las columnas deben estar entre 1 y {MAX_LADO_CUADRICULA}");
+        }
+        if p.filas * p.columnas < 2 {
+            bail!("La Cuadrícula debe tener al menos 2 Piezas");
+        }
+    } else if !(2..=12).contains(&p.piezas) {
         bail!("La cantidad de piezas debe estar entre 2 y 12");
     }
     if !(p.ancho_mm > 0.0 && p.ancho_mm.is_finite()) {
@@ -139,9 +151,26 @@ pub fn generar(ilustracion: &Ilustracion, p: &Parametros) -> Result<Rompecabezas
         bail!("No se encontró ninguna figura en la Ilustración; probá ajustar el Umbral");
     }
 
-    let (etiquetas, semilla_usada, cumple) = buscar_variante(p.semilla, p.piezas, |semilla| {
-        particionar(&mascara, p.piezas, semilla)
-    });
+    let (etiquetas, semilla_usada, pieza_chica) = if cuadricula {
+        // Una sola partición posible: la semilla solo decide las Pestañas.
+        let et = particion::cuadricula(&mascara, p.filas, p.columnas);
+        let areas = areas_por_pieza(&et, p.filas * p.columnas);
+        let chica = (razon_minima(&areas) < FRACCION_MIN).then(|| {
+            "Hay Piezas de menos de la mitad del promedio; probá con un radio de esquinas menor"
+                .to_string()
+        });
+        (et, p.semilla, chica)
+    } else {
+        let (et, semilla_usada, cumple) = buscar_variante(p.semilla, p.piezas, |semilla| {
+            particionar(&mascara, p.piezas, semilla)
+        });
+        let chica = (!cumple).then(|| {
+            format!(
+                "Ninguna Variante cumplió el tamaño mínimo de Pieza; se usa la mejor (semilla {semilla_usada})"
+            )
+        });
+        (et, semilla_usada, chica)
+    };
 
     // La Silueta rectangular es exacta, no la que sale de los píxeles.
     let mut silueta: Vec<Trazo> = rectangular
@@ -175,7 +204,7 @@ pub fn generar(ilustracion: &Ilustracion, p: &Parametros) -> Result<Rompecabezas
         }
     }
 
-    let aviso = componer_aviso(cumple, semilla_usada, usa_rojo_de_corte(ilustracion));
+    let aviso = componer_aviso(pieza_chica, usa_rojo_de_corte(ilustracion));
     Ok(Rompecabezas {
         lienzo_mm: (
             mascara.ancho as f64 * mm_por_px,
@@ -246,13 +275,8 @@ fn buscar_variante(
 }
 
 /// Los avisos de `generar`, uno por línea.
-fn componer_aviso(variante_cumple: bool, semilla_usada: u64, rojo: bool) -> Option<String> {
-    let mut avisos = Vec::new();
-    if !variante_cumple {
-        avisos.push(format!(
-            "Ninguna Variante cumplió el tamaño mínimo de Pieza; se usa la mejor (semilla {semilla_usada})"
-        ));
-    }
+fn componer_aviso(pieza_chica: Option<String>, rojo: bool) -> Option<String> {
+    let mut avisos: Vec<String> = pieza_chica.into_iter().collect();
     if rojo {
         avisos.push(
             "La Ilustración usa el mismo rojo que la Capa de corte (#FF0000); en LightBurn esas líneas se cortarían"
@@ -455,13 +479,13 @@ mod tests {
 
     #[test]
     fn aviso_combina_pieza_chica_y_rojo() {
-        assert_eq!(componer_aviso(true, 3, false), None);
-        let chica = componer_aviso(false, 7, false).unwrap();
-        assert!(chica.contains("semilla 7") && !chica.contains("#FF0000"));
-        let rojo = componer_aviso(true, 7, true).unwrap();
-        assert!(rojo.contains("#FF0000") && !rojo.contains("Variante"));
-        let ambos = componer_aviso(false, 7, true).unwrap();
-        assert!(ambos.contains("semilla 7") && ambos.contains("#FF0000"));
+        let chica = || Some("Pieza chica".to_string());
+        assert_eq!(componer_aviso(None, false), None);
+        assert_eq!(componer_aviso(chica(), false).unwrap(), "Pieza chica");
+        let rojo = componer_aviso(None, true).unwrap();
+        assert!(rojo.contains("#FF0000") && !rojo.contains("Pieza chica"));
+        let ambos = componer_aviso(chica(), true).unwrap();
+        assert!(ambos.starts_with("Pieza chica\n") && ambos.contains("#FF0000"));
     }
 
     #[test]
@@ -633,5 +657,71 @@ mod tests {
                 assert!(en_silueta > 0);
             }
         }
+    }
+
+    fn en_cuadricula(filas: usize, columnas: usize) -> Parametros {
+        Parametros {
+            silueta_rectangular: true,
+            cuadricula: true,
+            filas,
+            columnas,
+            ..Parametros::default()
+        }
+    }
+
+    #[test]
+    fn cuadricula_da_piezas_iguales_con_una_pestana_por_union() {
+        let il = png_transparente(400, 300);
+        let p = en_cuadricula(3, 4);
+        let r = generar(&il, &p).unwrap();
+        let areas = areas_por_pieza(&r.etiquetas, 12);
+        assert!(razon_minima(&areas) > 0.95, "{areas:?}");
+        // 3 filas de 3 Uniones verticales y 2 filas de 4 horizontales.
+        assert_eq!(r.uniones.len(), 3 * 3 + 2 * 4);
+        for u in &r.uniones {
+            let cubicas = u
+                .segmentos
+                .iter()
+                .any(|s| matches!(s, crate::geometria::Segmento::Cubica(..)));
+            assert!(cubicas, "Unión sin Pestaña");
+        }
+        assert_eq!((r.semilla_usada, r.aviso.clone()), (p.semilla, None));
+        // Otra semilla, misma partición y otras Pestañas.
+        let otra = generar(&il, &Parametros { semilla: 1, ..p }).unwrap();
+        assert_eq!(otra.etiquetas, r.etiquetas);
+        assert_ne!(otra.uniones, r.uniones);
+    }
+
+    #[test]
+    fn cuadricula_con_la_silueta_de_la_figura_se_ignora() {
+        let p = Parametros {
+            silueta_rectangular: false,
+            ..en_cuadricula(1, 1)
+        };
+        let il = png_transparente(40, 40);
+        // Sin figura falla por eso, no por la Cuadrícula de 1 × 1.
+        let error = generar(&il, &p).unwrap_err().to_string();
+        assert!(error.contains("ninguna figura"), "{error}");
+    }
+
+    #[test]
+    fn cuadricula_fuera_de_rango_es_error() {
+        let il = png_transparente(40, 40);
+        for (filas, columnas) in [(1, 1), (0, 3), (9, 2), (2, 9)] {
+            assert!(generar(&il, &en_cuadricula(filas, columnas)).is_err());
+        }
+        assert!(generar(&il, &en_cuadricula(1, 2)).is_ok());
+    }
+
+    #[test]
+    fn cuadricula_avisa_si_las_esquinas_dejan_piezas_chicas() {
+        let il = png_transparente(300, 300);
+        let p = Parametros {
+            esquinas_redondeadas: true,
+            radio_esquinas_mm: 200.0,
+            ..en_cuadricula(4, 4)
+        };
+        let aviso = generar(&il, &p).unwrap().aviso.unwrap();
+        assert!(aviso.contains("radio de esquinas"), "{aviso}");
     }
 }

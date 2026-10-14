@@ -25,6 +25,11 @@ pub struct Parametros {
     /// Con Silueta rectangular, redondear sus esquinas con `radio_esquinas_mm`.
     pub esquinas_redondeadas: bool,
     pub radio_esquinas_mm: f64,
+    /// Con Silueta rectangular, Piezas en Cuadrícula de `filas` × `columnas`
+    /// en lugar de `piezas` irregulares. Con la Silueta de la figura se ignora.
+    pub cuadricula: bool,
+    pub filas: usize,
+    pub columnas: usize,
 }
 
 impl Default for Parametros {
@@ -40,6 +45,9 @@ impl Default for Parametros {
             silueta_rectangular: false,
             esquinas_redondeadas: false,
             radio_esquinas_mm: 5.0,
+            cuadricula: false,
+            filas: 3,
+            columnas: 3,
         }
     }
 }

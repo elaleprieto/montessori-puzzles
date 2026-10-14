@@ -44,8 +44,12 @@ _Avoid_: costura, frontera, junta
 La saliente redondeada de una Unión que encastra una Pieza en su vecina.
 _Avoid_: knob, tab, encastre, oreja
 
+**Cuadrícula**:
+La forma de partir una Silueta rectangular en Filas × Columnas Piezas iguales, en lugar de Piezas irregulares.
+_Avoid_: grilla, grid, modo regular
+
 **Variante**:
-Una de las particiones posibles de la misma Silueta en la misma cantidad de Piezas. Se identifica por su semilla.
+Una de las particiones posibles de la misma Silueta en la misma cantidad de Piezas. Se identifica por su semilla. En Cuadrícula la partición es una sola: la semilla solo cambia hacia dónde salen las Pestañas y su irregularidad.
 _Avoid_: versión, intento
 
 ### Salida
