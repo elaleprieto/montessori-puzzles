@@ -6,6 +6,7 @@ pub mod geometria;
 pub mod mascara;
 pub mod particion;
 pub mod pestana;
+pub mod rompecabezas;
 pub mod svg;
 
 /// Lo que el usuario ajusta para generar un Rompecabezas.

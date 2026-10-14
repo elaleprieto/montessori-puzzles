@@ -44,6 +44,17 @@ impl Ilustracion {
     }
 }
 
+/// Opciones de usvg compartidas por toda la app: cargan las fuentes del
+/// sistema una sola vez para que el `<text>` se convierta en trazos.
+pub fn opciones_svg() -> &'static usvg::Options<'static> {
+    static OPCIONES: std::sync::OnceLock<usvg::Options<'static>> = std::sync::OnceLock::new();
+    OPCIONES.get_or_init(|| {
+        let mut o = usvg::Options::default();
+        o.fontdb_mut().load_system_fonts();
+        o
+    })
+}
+
 /// Contenido decodificado de una Ilustración según su Formato.
 enum Decodificada {
     Raster(image::DynamicImage),
@@ -61,7 +72,7 @@ fn decodificar(bytes: &[u8], formato: Formato) -> Result<Decodificada> {
     match formato {
         Formato::Png => raster(image::ImageFormat::Png),
         Formato::Jpg => raster(image::ImageFormat::Jpeg),
-        Formato::Svg => usvg::Tree::from_data(bytes, &usvg::Options::default())
+        Formato::Svg => usvg::Tree::from_data(bytes, opciones_svg())
             .map(|t| Decodificada::Vector(Box::new(t)))
             .context("No se pudo leer el SVG: el archivo está dañado o no es un SVG válido"),
     }
@@ -321,6 +332,16 @@ mod tests {
     use super::*;
     use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
     use std::io::Cursor;
+
+    /// Requiere alguna fuente instalada en el sistema.
+    #[test]
+    #[ignore = "necesita fuentes del sistema"]
+    fn el_texto_de_un_svg_es_figura() {
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><text x="5" y="85" font-size="90" font-family="sans-serif" font-weight="bold">MM</text></svg>"#;
+        let il = Ilustracion::desde_bytes(svg.to_vec(), Formato::Svg).unwrap();
+        let m = Mascara::desde_ilustracion(&il, 128, 200, 0).unwrap();
+        assert!(m.datos.iter().filter(|&&b| b).count() > 500);
+    }
 
     fn codificar(img: &RgbaImage, fmt: ImageFormat) -> Vec<u8> {
         let mut out = Cursor::new(Vec::new());

@@ -85,7 +85,7 @@ fn grabado(dibujo: &Dibujo) -> String {
 }
 
 fn svg_anidado(bytes: &[u8], x: &str, y: &str, w: &str, h: &str) -> String {
-    let tree = resvg::usvg::Tree::from_data(bytes, &resvg::usvg::Options::default());
+    let tree = resvg::usvg::Tree::from_data(bytes, crate::mascara::opciones_svg());
     debug_assert!(tree.is_ok(), "la Ilustración SVG no parsea: {tree:?}");
     let Ok(tree) = tree else {
         return String::new();
