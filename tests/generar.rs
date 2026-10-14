@@ -75,8 +75,10 @@ fn elefante_con_cinco_piezas() {
     let svg = exportar_svg(&r, &il);
     let tree =
         resvg::usvg::Tree::from_data(svg.as_bytes(), &resvg::usvg::Options::default()).unwrap();
-    // El lienzo mide el Ancho más el Margen por lado, en mm (96 dpi para usvg).
-    assert!((tree.size().width() as f64 - r.lienzo_mm.0 * 96.0 / 25.4).abs() < 0.5);
+    // La página se ajusta a la caja de la Silueta, en mm (96 dpi para usvg).
+    let (x0, y0, x1, y1) = caja(&r.silueta);
+    assert!((tree.size().width() as f64 - (x1 - x0) * 96.0 / 25.4).abs() < 0.5);
+    assert!((tree.size().height() as f64 - (y1 - y0) * 96.0 / 25.4).abs() < 0.5);
     assert!(svg.contains("mm\" height=\""));
 }
 
@@ -278,4 +280,95 @@ fn recorre_fixtures() {
         )
         .unwrap();
     }
+}
+
+/// La imagen embebida en la Capa de grabado: (mime, bytes).
+fn grabado_embebido(svg: &str) -> (String, Vec<u8>) {
+    use base64::Engine;
+    let ini = svg.find("href=\"data:").expect("sin imagen embebida") + "href=\"data:".len();
+    let resto = &svg[ini..];
+    let (mime, resto) = resto.split_once(";base64,").unwrap();
+    let datos = &resto[..resto.find('"').unwrap()];
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(datos)
+        .unwrap();
+    (mime.to_string(), bytes)
+}
+
+#[test]
+fn el_grabado_de_un_jpg_con_fondo_liso_no_lleva_el_fondo() {
+    // Fondo blanco opaco, un disco oscuro (la figura) y una marca suelta lejos
+    // (como la línea punteada de "recortar" de muchas ilustraciones).
+    let (w, h) = (300u32, 200u32);
+    let mut img = image::RgbImage::from_pixel(w, h, image::Rgb([255, 255, 255]));
+    for y in 0..h {
+        for x in 0..w {
+            let d = ((x as f64 - 150.0).powi(2) + (y as f64 - 100.0).powi(2)).sqrt();
+            let marca = (10..20).contains(&x) && (10..20).contains(&y);
+            if d <= 70.0 || marca {
+                img.put_pixel(x, y, image::Rgb([40, 60, 160]));
+            }
+        }
+    }
+    let mut b = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut b), image::ImageFormat::Jpeg)
+        .unwrap();
+    let il = Ilustracion::desde_bytes(b, Formato::Jpg).unwrap();
+    let p = Parametros {
+        piezas: 3,
+        ancho_mm: 150.0,
+        ..Default::default()
+    };
+    let r = generar(&il, &p).unwrap();
+    let svg = exportar_svg(&r, &il);
+    let (mime, bytes) = grabado_embebido(&svg);
+
+    assert_eq!(mime, "image/png");
+    let g = image::load_from_memory(&bytes).unwrap().to_rgba8();
+    let (gw, gh) = g.dimensions();
+    // Recortada a la figura (disco de 140 px + Margen), no la Ilustración entera.
+    assert!(gw < 160 && gh < 160, "recortada: {gw}×{gh}");
+    for (x, y) in [(0, 0), (gw - 1, 0), (0, gh - 1), (gw - 1, gh - 1)] {
+        assert_eq!(g.get_pixel(x, y)[3], 0, "fuera del disco no se graba");
+    }
+    let centro = g.get_pixel(gw / 2, gh / 2);
+    assert_eq!(centro[3], 255, "la figura se graba");
+    assert!(
+        centro[2] > 120 && centro[0] < 90,
+        "con su color: {centro:?}"
+    );
+    // Y ocupa toda la página, que es la caja de la Silueta.
+    let (x0, y0, x1, y1) = caja(&r.silueta);
+    let (ix, iy, iw, ih) = rect_de_imagen(&svg);
+    let pagina = |n: &str| -> f64 {
+        let i = svg.find(&format!("{n}=\"")).unwrap() + n.len() + 2;
+        svg[i..i + svg[i..].find("mm").unwrap()].parse().unwrap()
+    };
+    assert!((pagina("width") - (x1 - x0)).abs() < 1e-3);
+    assert!((pagina("height") - (y1 - y0)).abs() < 1e-3);
+    for (a, b) in [(ix, 0.0), (iy, 0.0), (iw, x1 - x0), (ih, y1 - y0)] {
+        assert!(
+            (a - b).abs() < 1.0,
+            "imagen {ix} {iy} {iw} {ih} vs silueta {x0} {y0} {x1} {y1}"
+        );
+    }
+}
+
+/// x, y, ancho y alto (mm) del `<image>` de la Capa de grabado.
+fn rect_de_imagen(svg: &str) -> (f64, f64, f64, f64) {
+    let tag = &svg[svg.find("<image").unwrap()..];
+    let attr = |n: &str| -> f64 {
+        let i = tag.find(&format!(" {n}=\"")).unwrap() + n.len() + 3;
+        tag[i..i + tag[i..].find('"').unwrap()].parse().unwrap()
+    };
+    (attr("x"), attr("y"), attr("width"), attr("height"))
+}
+
+#[test]
+fn el_grabado_de_un_svg_va_tal_cual() {
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="white"/><circle cx="50" cy="50" r="30" fill="black"/></svg>"#;
+    let il = Ilustracion::desde_bytes(svg.to_vec(), Formato::Svg).unwrap();
+    let r = generar(&il, &Parametros::default()).unwrap();
+    // Sigue vectorial (usvg lo normaliza a <path>), sin pasar a imagen.
+    assert!(!exportar_svg(&r, &il).contains("<image"));
 }

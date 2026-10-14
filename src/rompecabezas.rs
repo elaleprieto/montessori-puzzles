@@ -4,7 +4,7 @@ use crate::Parametros;
 use crate::bordes::extraer_bordes;
 use crate::geometria::{Punto, Rect, Trazo, largo};
 use crate::mascara::Mascara;
-use crate::mascara::{Formato, Ilustracion, opciones_svg};
+use crate::mascara::{Formato, Ilustracion, opciones_svg, rasterizar};
 use crate::particion::{Etiquetas, FONDO, particionar};
 use crate::pestana::{ParametrosPestana, con_pestana};
 use anyhow::{Result, bail};
@@ -251,15 +251,106 @@ fn semilla_borde(semilla: u64, a: u16, b: u16, indice: usize) -> u64 {
     z ^ (z >> 31)
 }
 
-/// El SVG para el láser: Grabado = Ilustración, Corte = Silueta + Uniones.
+/// El SVG para el láser: Grabado = Ilustración sin el fondo, Corte = Silueta + Uniones.
 pub fn exportar_svg(r: &Rompecabezas, ilustracion: &Ilustracion) -> String {
+    let sin_fondo = grabado_sin_fondo(r, ilustracion);
+    debug_assert!(
+        sin_fondo.is_ok(),
+        "no se pudo quitar el fondo: {sin_fondo:?}"
+    );
+    let (ilustracion, en) = match &sin_fondo {
+        Ok((il, en)) => (il, *en),
+        Err(_) => (ilustracion, r.ilustracion_en),
+    };
+    // La página se ajusta a la caja de la Silueta: todo se corre al origen.
+    let pagina = caja_de(&r.silueta).unwrap_or(Rect {
+        x: 0.0,
+        y: 0.0,
+        ancho: r.lienzo_mm.0,
+        alto: r.lienzo_mm.1,
+    });
     crate::svg::exportar(&crate::svg::Dibujo {
-        ancho_mm: r.lienzo_mm.0,
-        alto_mm: r.lienzo_mm.1,
-        cortes: r.silueta.iter().chain(&r.uniones).cloned().collect(),
+        ancho_mm: pagina.ancho,
+        alto_mm: pagina.alto,
+        cortes: r
+            .silueta
+            .iter()
+            .chain(&r.uniones)
+            .map(|t| t.trasladado(-pagina.x, -pagina.y))
+            .collect(),
         ilustracion,
-        ilustracion_en: r.ilustracion_en,
+        ilustracion_en: Rect {
+            x: en.x - pagina.x,
+            y: en.y - pagina.y,
+            ..en
+        },
     })
+}
+
+/// Caja de un conjunto de Trazos (con sus puntos de control); `None` si no hay.
+fn caja_de(trazos: &[Trazo]) -> Option<Rect> {
+    let mut puntos = trazos.iter().flat_map(Trazo::puntos);
+    let p = puntos.next()?;
+    let (x0, y0, x1, y1) = puntos.fold((p.x, p.y, p.x, p.y), |c, p| {
+        (c.0.min(p.x), c.1.min(p.y), c.2.max(p.x), c.3.max(p.y))
+    });
+    Some(Rect {
+        x: x0,
+        y: y0,
+        ancho: x1 - x0,
+        alto: y1 - y0,
+    })
+}
+
+/// La Ilustración tal como va a la Capa de grabado y dónde va (mm). Si es
+/// raster: en PNG a su resolución original, recortada a la caja de la Silueta
+/// y con lo que queda fuera de ella transparente, para que el láser no grabe
+/// el fondo (ni lo que se cae al cortar). Un SVG va tal cual.
+pub fn grabado_sin_fondo(
+    r: &Rompecabezas,
+    ilustracion: &Ilustracion,
+) -> Result<(Ilustracion, Rect)> {
+    if ilustracion.formato == Formato::Svg {
+        return Ok((ilustracion.clone(), r.ilustracion_en));
+    }
+    let lado = ilustracion.ancho_px.max(ilustracion.alto_px) as usize;
+    let mut img = rasterizar(ilustracion, lado)?;
+    let (w, h) = img.dimensions();
+    let il = r.ilustracion_en;
+    let et = &r.etiquetas;
+    // Caja (x0, y0, x1, y1) de los píxeles que quedan dentro, en px.
+    let mut caja = (u32::MAX, u32::MAX, 0, 0);
+    for (x, y, px) in img.enumerate_pixels_mut() {
+        // Centro del píxel, en mm y luego en la grilla de trabajo.
+        let mx = il.x + (x as f64 + 0.5) * il.ancho / w as f64;
+        let my = il.y + (y as f64 + 0.5) * il.alto / h as f64;
+        let (gx, gy) = (mx / r.mm_por_px, my / r.mm_por_px);
+        let dentro = gx >= 0.0
+            && gy >= 0.0
+            && (gx as usize) < et.ancho
+            && (gy as usize) < et.alto
+            && et.datos[gy as usize * et.ancho + gx as usize] != FONDO;
+        if dentro {
+            caja = (caja.0.min(x), caja.1.min(y), caja.2.max(x), caja.3.max(y));
+        } else {
+            px[3] = 0;
+        }
+    }
+    if caja.0 > caja.2 {
+        bail!("La Silueta no cubre ningún píxel de la Ilustración");
+    }
+    let (cw, ch) = (caja.2 - caja.0 + 1, caja.3 - caja.1 + 1);
+    let recorte = image::imageops::crop_imm(&img, caja.0, caja.1, cw, ch).to_image();
+    let mut png = Vec::new();
+    recorte.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)?;
+    let (mm_x, mm_y) = (il.ancho / w as f64, il.alto / h as f64);
+    let en = Rect {
+        x: il.x + caja.0 as f64 * mm_x,
+        y: il.y + caja.1 as f64 * mm_y,
+        ancho: cw as f64 * mm_x,
+        alto: ch as f64 * mm_y,
+    };
+    Ok((Ilustracion::desde_bytes(png, Formato::Png)?, en))
 }
 
 #[cfg(test)]

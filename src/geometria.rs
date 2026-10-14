@@ -58,6 +58,30 @@ impl Trazo {
             segmentos: resto.iter().copied().map(Segmento::Linea).collect(),
         }
     }
+
+    /// El mismo Trazo desplazado `(dx, dy)`.
+    pub fn trasladado(&self, dx: f64, dy: f64) -> Self {
+        let m = |p: Punto| Punto::new(p.x + dx, p.y + dy);
+        Self {
+            inicio: m(self.inicio),
+            segmentos: self
+                .segmentos
+                .iter()
+                .map(|s| match *s {
+                    Segmento::Linea(p) => Segmento::Linea(m(p)),
+                    Segmento::Cubica(a, b, c) => Segmento::Cubica(m(a), m(b), m(c)),
+                })
+                .collect(),
+        }
+    }
+
+    /// Todos los puntos del Trazo, incluidos los de control de las curvas.
+    pub fn puntos(&self) -> impl Iterator<Item = Punto> + '_ {
+        std::iter::once(self.inicio).chain(self.segmentos.iter().flat_map(|s| match *s {
+            Segmento::Linea(p) => vec![p],
+            Segmento::Cubica(a, b, c) => vec![a, b, c],
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -73,5 +97,27 @@ mod tests {
         ];
         assert_eq!(largo(&l), 7.0);
         assert_eq!(largo(&l[..1]), 0.0);
+    }
+
+    #[test]
+    fn trasladar_mueve_todos_los_puntos_incluidos_los_de_control() {
+        let t = Trazo {
+            inicio: Punto::new(1.0, 1.0),
+            segmentos: vec![
+                Segmento::Linea(Punto::new(2.0, 1.0)),
+                Segmento::Cubica(
+                    Punto::new(3.0, 2.0),
+                    Punto::new(4.0, 2.0),
+                    Punto::new(5.0, 1.0),
+                ),
+            ],
+        };
+        let m = t.trasladado(-1.0, 10.0);
+        let esperado: Vec<Punto> = t
+            .puntos()
+            .map(|p| Punto::new(p.x - 1.0, p.y + 10.0))
+            .collect();
+        assert_eq!(m.puntos().collect::<Vec<_>>(), esperado);
+        assert_eq!(esperado.len(), 5);
     }
 }

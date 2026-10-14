@@ -8,6 +8,7 @@ pub mod particion;
 pub mod pestana;
 pub mod rompecabezas;
 pub mod svg;
+pub mod vista;
 
 /// Lo que el usuario ajusta para generar un Rompecabezas.
 #[derive(Debug, Clone, Copy, PartialEq)]

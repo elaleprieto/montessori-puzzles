@@ -1,5 +1,7 @@
+mod app;
+
 use anyhow::{Context, Result, bail};
-use clap::{CommandFactory, Parser};
+use clap::Parser;
 use montessori_puzzles::Parametros;
 use montessori_puzzles::mascara::{Formato, Ilustracion};
 use montessori_puzzles::rompecabezas::{exportar_svg, generar};
@@ -11,7 +13,7 @@ use std::path::{Path, PathBuf};
     about = "Genera un rompecabezas Montessori en SVG a partir de una Ilustración"
 )]
 struct Args {
-    /// Ilustración (PNG, JPG o SVG)
+    /// Ilustración (PNG, JPG o SVG); sin ella se abre la app
     entrada: Option<PathBuf>,
     /// Cantidad de Piezas
     #[arg(long, default_value_t = Parametros::default().piezas as u32, value_parser = clap::value_parser!(u32).range(2..=12))]
@@ -65,16 +67,10 @@ fn formato_y_salida(entrada: &Path, salida: Option<&Path>) -> Result<(Formato, P
     Ok((formato, salida))
 }
 
-/// Qué hacer sin ENTRADA. La ronda 07 lo reemplaza por abrir la app.
-fn sin_entrada() -> Result<()> {
-    Args::command().print_help()?;
-    bail!("Falta la ENTRADA")
-}
-
 fn main() -> Result<()> {
     let args = Args::parse();
     let Some(entrada) = args.entrada.as_deref() else {
-        return sin_entrada();
+        return app::abrir();
     };
     let (formato, salida) = formato_y_salida(entrada, args.salida.as_deref())?;
     let bytes =
