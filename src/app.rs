@@ -18,6 +18,25 @@ const LADO_TEXTURA: usize = 1600;
 /// Opacidad del color de las Piezas sobre la Ilustración.
 const ALFA_PIEZAS: u8 = 90;
 const ROJO_DE_CORTE: egui::Color32 = egui::Color32::from_rgb(255, 0, 0);
+/// Ancho del panel de Parámetros.
+const ANCHO_PANEL: f32 = 380.0;
+
+/// Controles más grandes que los de egui por defecto, para usarlos cómodos.
+fn agrandar_controles(estilo: &mut egui::Style) {
+    use egui::{FontFamily::Proportional, FontId, TextStyle};
+    estilo.text_styles = [
+        (TextStyle::Heading, FontId::new(24.0, Proportional)),
+        (TextStyle::Body, FontId::new(17.0, Proportional)),
+        (TextStyle::Button, FontId::new(17.0, Proportional)),
+        (TextStyle::Small, FontId::new(13.0, Proportional)),
+        (TextStyle::Monospace, FontId::monospace(15.0)),
+    ]
+    .into();
+    let e = &mut estilo.spacing;
+    e.interact_size = egui::vec2(56.0, 32.0);
+    e.button_padding = egui::vec2(12.0, 6.0);
+    e.item_spacing = egui::vec2(8.0, 8.0);
+}
 
 pub fn abrir() -> Result<()> {
     let opciones = eframe::NativeOptions {
@@ -29,7 +48,10 @@ pub fn abrir() -> Result<()> {
     eframe::run_native(
         "montessori-puzzles",
         opciones,
-        Box::new(|_| Ok(Box::new(App::new()))),
+        Box::new(|cc| {
+            cc.egui_ctx.all_styles_mut(agrandar_controles);
+            Ok(Box::new(App::new()))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("No se pudo abrir la ventana: {e}"))
 }
@@ -218,10 +240,7 @@ impl App {
         ui.heading("Rompecabezas");
         ui.add_space(4.0);
         if ui
-            .add_enabled(
-                !self.dialogo_abierto,
-                egui::Button::new("Abrir Ilustración…"),
-            )
+            .add_enabled(!self.dialogo_abierto, boton_ancho("Abrir Ilustración…"))
             .clicked()
         {
             self.abrir_dialogo(ui.ctx(), || {
@@ -238,24 +257,51 @@ impl App {
         ui.separator();
 
         let p = &mut self.parametros;
-        let mut piezas = p.piezas as u32;
-        ui.add(egui::Slider::new(&mut piezas, 2..=12).text("Piezas"));
-        p.piezas = piezas as usize;
-        ui.add(egui::Slider::new(&mut p.ancho_mm, 40.0..=600.0).text("Ancho (mm)"));
-        ui.add(egui::Slider::new(&mut p.umbral, 0..=255).text("Umbral"));
-        ui.add(egui::Slider::new(&mut p.margen_mm, 0.0..=10.0).text("Margen (mm)"));
-        ui.add(egui::Slider::new(&mut p.tamano_pestana, 0.05..=0.4).text("Pestaña"));
-        ui.add(egui::Slider::new(&mut p.jitter, 0.0..=1.0).text("Irregularidad"));
+        let d = Parametros::default();
+        deslizador(ui, "Piezas", &mut p.piezas, d.piezas, 2..=12, "");
+        deslizador(
+            ui,
+            "Ancho",
+            &mut p.ancho_mm,
+            d.ancho_mm,
+            40.0..=600.0,
+            " mm",
+        );
+        deslizador(ui, "Umbral", &mut p.umbral, d.umbral, 0..=255, "");
+        deslizador(
+            ui,
+            "Margen",
+            &mut p.margen_mm,
+            d.margen_mm,
+            0.0..=10.0,
+            " mm",
+        );
+        deslizador(
+            ui,
+            "Pestaña",
+            &mut p.tamano_pestana,
+            d.tamano_pestana,
+            0.05..=0.4,
+            "",
+        );
+        deslizador(ui, "Irregularidad", &mut p.jitter, d.jitter, 0.0..=1.0, "");
+        ui.label("Semilla");
         ui.horizontal(|ui| {
-            ui.add(egui::DragValue::new(&mut p.semilla));
-            ui.label("Semilla");
+            ui.add_sized(
+                [
+                    ui.available_width() - BOTON_RESTAURAR - ui.spacing().item_spacing.x,
+                    32.0,
+                ],
+                egui::DragValue::new(&mut p.semilla),
+            );
+            restaurar(ui, &mut p.semilla, d.semilla);
         });
         let otra = self
             .vista
             .as_ref()
             .map(|v| v.rompecabezas.semilla_usada.wrapping_add(1));
         if ui
-            .add_enabled(otra.is_some(), egui::Button::new("Otra Variante"))
+            .add_enabled(otra.is_some(), boton_ancho("Otra Variante"))
             .clicked()
             && let Some(s) = otra
         {
@@ -265,7 +311,7 @@ impl App {
 
         let listo = self.vista.is_some() && !self.generando && !self.dialogo_abierto;
         if ui
-            .add_enabled(listo, egui::Button::new("Exportar SVG…"))
+            .add_enabled(listo, boton_ancho("Exportar SVG…"))
             .clicked()
         {
             self.pedir_salida(ui.ctx());
@@ -359,7 +405,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::Panel::left("parametros")
             .resizable(false)
-            .exact_size(300.0)
+            .exact_size(ANCHO_PANEL)
             .show(ui, |ui| self.panel_de_parametros(ui));
         egui::CentralPanel::default().show(ui, |ui| self.vista_previa(ui));
     }
@@ -403,6 +449,48 @@ fn preparar_vista(ctx: &egui::Context, rompecabezas: Rompecabezas) -> Vista {
         piezas: ctx.load_texture("piezas", imagen, egui::TextureOptions::NEAREST),
         cortes,
         rompecabezas,
+    }
+}
+
+/// Un botón que ocupa todo el ancho del panel.
+fn boton_ancho(texto: &str) -> egui::Button<'_> {
+    egui::Button::new(texto).min_size(egui::vec2(ANCHO_PANEL - 24.0, 36.0))
+}
+
+/// Ancho del botón ↺ que vuelve un control a su valor por defecto.
+const BOTON_RESTAURAR: f32 = 36.0;
+
+/// Un Parámetro: su nombre arriba y, debajo, un deslizador que ocupa el ancho
+/// del panel con el botón para volver al valor por defecto.
+fn deslizador<T: egui::emath::Numeric>(
+    ui: &mut egui::Ui,
+    nombre: &str,
+    valor: &mut T,
+    defecto: T,
+    rango: std::ops::RangeInclusive<T>,
+    sufijo: &str,
+) {
+    ui.label(nombre);
+    ui.horizontal(|ui| {
+        // El deslizador se lleva lo que sobra después de la caja del número y el botón.
+        let s = ui.spacing();
+        let resto = s.interact_size.x + BOTON_RESTAURAR + 2.0 * s.item_spacing.x + 24.0;
+        ui.spacing_mut().slider_width = (ui.available_width() - resto).max(80.0);
+        ui.add(egui::Slider::new(valor, rango).suffix(sufijo));
+        restaurar(ui, valor, defecto);
+    });
+    ui.add_space(2.0);
+}
+
+fn restaurar<T: PartialEq>(ui: &mut egui::Ui, valor: &mut T, defecto: T) {
+    let boton = egui::Button::new("↺").min_size(egui::vec2(BOTON_RESTAURAR, 32.0));
+    if ui
+        .add_enabled(*valor != defecto, boton)
+        .on_hover_text("Volver al valor por defecto")
+        .on_disabled_hover_text("Ya está en el valor por defecto")
+        .clicked()
+    {
+        *valor = defecto;
     }
 }
 
