@@ -84,6 +84,48 @@ impl Trazo {
     }
 }
 
+/// Distancia de los puntos de control al extremo para aproximar un cuarto de
+/// círculo de radio 1 con una cúbica.
+const KAPPA: f64 = 0.552_284_75;
+
+/// Contorno cerrado de `r` con las esquinas redondeadas con `radio` (0 da
+/// esquinas rectas), recorrido en sentido horario desde arriba a la izquierda.
+/// El radio se limita a la mitad del lado menor.
+pub fn rectangulo_redondeado(r: Rect, radio: f64) -> Trazo {
+    let radio = radio.clamp(0.0, r.ancho.min(r.alto) / 2.0);
+    let (x0, y0, x1, y1) = (r.x, r.y, r.x + r.ancho, r.y + r.alto);
+    let k = radio * KAPPA;
+    // Por esquina: el vértice, la dirección del lado que llega y la del que
+    // sale (vectores unitarios).
+    let esquinas = [
+        ((x1, y0), (1.0, 0.0), (0.0, 1.0)),
+        ((x1, y1), (0.0, 1.0), (-1.0, 0.0)),
+        ((x0, y1), (-1.0, 0.0), (0.0, -1.0)),
+        ((x0, y0), (0.0, -1.0), (1.0, 0.0)),
+    ];
+    // Empieza donde termina el último arco, así el contorno cierra solo.
+    let inicio = Punto::new(x0 + radio, y0);
+    let mut actual = inicio;
+    let mut segmentos = Vec::new();
+    for ((cx, cy), (ex, ey), (sx, sy)) in esquinas {
+        let llegada = Punto::new(cx - ex * radio, cy - ey * radio);
+        let salida = Punto::new(cx + sx * radio, cy + sy * radio);
+        // Si el radio es la mitad del lado, ese lado no tiene tramo recto.
+        if llegada != actual {
+            segmentos.push(Segmento::Linea(llegada));
+        }
+        if radio > 0.0 {
+            segmentos.push(Segmento::Cubica(
+                Punto::new(llegada.x + ex * k, llegada.y + ey * k),
+                Punto::new(salida.x - sx * k, salida.y - sy * k),
+                salida,
+            ));
+        }
+        actual = salida;
+    }
+    Trazo { inicio, segmentos }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +161,71 @@ mod tests {
             .collect();
         assert_eq!(m.puntos().collect::<Vec<_>>(), esperado);
         assert_eq!(esperado.len(), 5);
+    }
+
+    fn rect() -> Rect {
+        Rect {
+            x: 10.0,
+            y: 20.0,
+            ancho: 100.0,
+            alto: 60.0,
+        }
+    }
+
+    #[test]
+    fn rectangulo_con_esquinas_rectas_pasa_por_los_cuatro_vertices() {
+        let t = rectangulo_redondeado(rect(), 0.0);
+        let vertices = [(10.0, 20.0), (110.0, 20.0), (110.0, 80.0), (10.0, 80.0)];
+        let puntos: Vec<Punto> = t.puntos().collect();
+        assert_eq!(puntos.len(), 5);
+        for (x, y) in vertices {
+            assert!(puntos.contains(&Punto::new(x, y)), "falta ({x}, {y})");
+        }
+        assert_eq!(puntos.first(), puntos.last());
+    }
+
+    #[test]
+    fn rectangulo_redondeado_sigue_los_arcos_y_cierra() {
+        let r = rect();
+        let radio = 8.0;
+        let t = rectangulo_redondeado(r, radio);
+        let p = crate::vista::aplanar(&t);
+        assert_eq!(p.first(), p.last());
+        let centros = [(18.0, 28.0), (102.0, 28.0), (102.0, 72.0), (18.0, 72.0)];
+        for q in &p {
+            assert!(q.x >= 10.0 - 1e-9 && q.x <= 110.0 + 1e-9);
+            assert!(q.y >= 20.0 - 1e-9 && q.y <= 80.0 + 1e-9);
+            // En la zona de una esquina, el contorno está sobre el arco.
+            for (cx, cy) in centros {
+                let en_esquina = (q.x - cx) * (cx - 60.0) > 0.0 && (q.y - cy) * (cy - 50.0) > 0.0;
+                if en_esquina {
+                    let d = (q.x - cx).hypot(q.y - cy);
+                    assert!((d - radio).abs() < 0.01, "radio {d} en {q:?}");
+                }
+            }
+        }
+        let cubicas = t
+            .segmentos
+            .iter()
+            .filter(|s| matches!(s, Segmento::Cubica(..)))
+            .count();
+        assert_eq!(cubicas, 4);
+    }
+
+    #[test]
+    fn el_radio_se_limita_a_la_mitad_del_lado_menor() {
+        // Alto 60: radio máximo 30, los lados cortos quedan sin tramo recto.
+        let t = rectangulo_redondeado(rect(), 50.0);
+        let p = crate::vista::aplanar(&t);
+        let (y0, y1) = p
+            .iter()
+            .fold((f64::MAX, f64::MIN), |c, q| (c.0.min(q.y), c.1.max(q.y)));
+        assert!((y0 - 20.0).abs() < 1e-9 && (y1 - 80.0).abs() < 1e-9);
+        let rectas = t
+            .segmentos
+            .iter()
+            .filter(|s| matches!(s, Segmento::Linea(_)))
+            .count();
+        assert_eq!(rectas, 2);
     }
 }

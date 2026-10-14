@@ -20,6 +20,11 @@ pub struct Parametros {
     pub tamano_pestana: f64,
     pub jitter: f64,
     pub semilla: u64,
+    /// La Silueta es el borde de la Ilustración entera, no el de la figura.
+    pub silueta_rectangular: bool,
+    /// Con Silueta rectangular, redondear sus esquinas con `radio_esquinas_mm`.
+    pub esquinas_redondeadas: bool,
+    pub radio_esquinas_mm: f64,
 }
 
 impl Default for Parametros {
@@ -32,6 +37,9 @@ impl Default for Parametros {
             tamano_pestana: 0.2,
             jitter: 0.3,
             semilla: 0,
+            silueta_rectangular: false,
+            esquinas_redondeadas: false,
+            radio_esquinas_mm: 5.0,
         }
     }
 }

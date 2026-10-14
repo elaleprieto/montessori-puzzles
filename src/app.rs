@@ -270,15 +270,33 @@ impl App {
             40.0..=600.0,
             " mm",
         );
-        deslizador(ui, "Umbral", &mut p.umbral, d.umbral, 0..=255, "");
-        deslizador(
-            ui,
-            "Margen",
-            &mut p.margen_mm,
-            d.margen_mm,
-            0.0..=10.0,
-            " mm",
-        );
+        ui.checkbox(&mut p.silueta_rectangular, "Silueta rectangular")
+            .on_hover_text("Corta la Ilustración entera, sin buscar la figura");
+        // Umbral y Margen solo cuentan para la Silueta de la figura.
+        ui.add_enabled_ui(!p.silueta_rectangular, |ui| {
+            deslizador(ui, "Umbral", &mut p.umbral, d.umbral, 0..=255, "");
+            deslizador(
+                ui,
+                "Margen",
+                &mut p.margen_mm,
+                d.margen_mm,
+                0.0..=10.0,
+                " mm",
+            );
+        });
+        ui.add_enabled_ui(p.silueta_rectangular, |ui| {
+            ui.checkbox(&mut p.esquinas_redondeadas, "Esquinas redondeadas");
+            ui.add_enabled_ui(p.esquinas_redondeadas, |ui| {
+                deslizador(
+                    ui,
+                    "Radio de las esquinas",
+                    &mut p.radio_esquinas_mm,
+                    d.radio_esquinas_mm,
+                    0.0..=50.0,
+                    " mm",
+                );
+            });
+        });
         deslizador(
             ui,
             "Pestaña",

@@ -2,7 +2,7 @@
 
 use crate::Parametros;
 use crate::bordes::extraer_bordes;
-use crate::geometria::{Punto, Rect, Trazo, largo};
+use crate::geometria::{Punto, Rect, Trazo, largo, rectangulo_redondeado};
 use crate::mascara::Mascara;
 use crate::mascara::{Formato, Ilustracion, opciones_svg, rasterizar};
 use crate::particion::{Etiquetas, FONDO, particionar};
@@ -16,6 +16,8 @@ const LADO_MAX: usize = 800;
 const INTENTOS: u64 = 20;
 /// Una Unión más corta que esto (mm) no lleva Pestaña.
 const UNION_MIN_MM: f64 = 15.0;
+/// Píxeles de fondo alrededor de la figura (además del Margen).
+const RELLENO_PX: usize = 2;
 /// Tamaño mínimo de una Pieza respecto del promedio.
 const FRACCION_MIN: f64 = 0.5;
 
@@ -110,11 +112,29 @@ pub fn generar(ilustracion: &Ilustracion, p: &Parametros) -> Result<Rompecabezas
     }
     let (w_px, h_px) = tamano_grilla(ilustracion);
     let mm_por_px = p.ancho_mm / w_px as f64;
-    let margen_px = p.margen_mm.max(0.0) / mm_por_px;
-    let relleno_px = margen_px.ceil() as usize + 2;
-    let mascara = Mascara::desde_ilustracion(ilustracion, p.umbral, LADO_MAX, relleno_px)?
-        .figura_principal()
-        .dilatar(margen_px);
+    let rectangular = radio_rectangular(p);
+    let (mascara, relleno_px) = match rectangular {
+        // Ni Umbral ni Margen: la figura es la Ilustración entera.
+        Some(radio_mm) => (
+            Mascara::rectangulo(w_px, h_px, RELLENO_PX, radio_mm / mm_por_px),
+            RELLENO_PX,
+        ),
+        None => {
+            let margen_px = p.margen_mm.max(0.0) / mm_por_px;
+            let relleno_px = margen_px.ceil() as usize + RELLENO_PX;
+            let m = Mascara::desde_ilustracion(ilustracion, p.umbral, LADO_MAX, relleno_px)?
+                .figura_principal()
+                .dilatar(margen_px);
+            (m, relleno_px)
+        }
+    };
+    let relleno_mm = relleno_px as f64 * mm_por_px;
+    let ilustracion_en = Rect {
+        x: relleno_mm,
+        y: relleno_mm,
+        ancho: p.ancho_mm,
+        alto: h_px as f64 * mm_por_px,
+    };
     if !mascara.datos.iter().any(|&b| b) {
         bail!("No se encontró ninguna figura en la Ilustración; probá ajustar el Umbral");
     }
@@ -123,39 +143,45 @@ pub fn generar(ilustracion: &Ilustracion, p: &Parametros) -> Result<Rompecabezas
         particionar(&mascara, p.piezas, semilla)
     });
 
-    let mut silueta = Vec::new();
+    // La Silueta rectangular es exacta, no la que sale de los píxeles.
+    let mut silueta: Vec<Trazo> = rectangular
+        .iter()
+        .map(|&radio_mm| rectangulo_redondeado(ilustracion_en, radio_mm))
+        .collect();
     let mut uniones = Vec::new();
     let pestana = ParametrosPestana {
         tamano: p.tamano_pestana,
         jitter: p.jitter,
     };
     for (i, borde) in extraer_bordes(&etiquetas).iter().enumerate() {
-        let mm: Vec<Punto> = borde
+        let mut mm: Vec<Punto> = borde
             .puntos
             .iter()
             .map(|q| Punto::new(q.x * mm_por_px, q.y * mm_por_px))
             .collect();
         if borde.a == FONDO {
-            silueta.push(Trazo::desde_polilinea(&mm));
+            if rectangular.is_none() {
+                silueta.push(Trazo::desde_polilinea(&mm));
+            }
         } else {
+            if let Some(radio_mm) = rectangular {
+                let n = mm.len() - 1;
+                for i in [0, n] {
+                    mm[i] = al_arco(mm[i], ilustracion_en, radio_mm, 2.0 * mm_por_px);
+                }
+            }
             let semilla = semilla_borde(semilla_usada, borde.a, borde.b, i);
             uniones.push(trazo_de_union(&mm, pestana, semilla));
         }
     }
 
     let aviso = componer_aviso(cumple, semilla_usada, usa_rojo_de_corte(ilustracion));
-    let relleno_mm = relleno_px as f64 * mm_por_px;
     Ok(Rompecabezas {
         lienzo_mm: (
             mascara.ancho as f64 * mm_por_px,
             mascara.alto as f64 * mm_por_px,
         ),
-        ilustracion_en: Rect {
-            x: relleno_mm,
-            y: relleno_mm,
-            ancho: p.ancho_mm,
-            alto: h_px as f64 * mm_por_px,
-        },
+        ilustracion_en,
         silueta,
         uniones,
         etiquetas,
@@ -163,6 +189,34 @@ pub fn generar(ilustracion: &Ilustracion, p: &Parametros) -> Result<Rompecabezas
         semilla_usada,
         aviso,
     })
+}
+
+/// Con Silueta rectangular, el radio de sus esquinas en mm (0 si son rectas).
+fn radio_rectangular(p: &Parametros) -> Option<f64> {
+    p.silueta_rectangular.then(|| {
+        if p.esquinas_redondeadas {
+            p.radio_esquinas_mm.max(0.0)
+        } else {
+            0.0
+        }
+    })
+}
+
+/// Lleva al arco de una esquina redondeada de `r` un extremo de Unión que
+/// quedó a menos de `tolerancia` de él: en la grilla, el arco es una escalera
+/// y la Unión podría no llegar a la Silueta, dejando las Piezas pegadas.
+/// Como depende solo del punto, las Uniones que comparten un extremo lo
+/// siguen compartiendo.
+fn al_arco(p: Punto, r: Rect, radio: f64, tolerancia: f64) -> Punto {
+    let radio = radio.clamp(0.0, r.ancho.min(r.alto) / 2.0);
+    let cx = p.x.clamp(r.x + radio, r.x + r.ancho - radio);
+    let cy = p.y.clamp(r.y + radio, r.y + r.alto - radio);
+    let d = (p.x - cx).hypot(p.y - cy);
+    let en_esquina = radio > 0.0 && cx != p.x && cy != p.y;
+    if !en_esquina || (d - radio).abs() > tolerancia {
+        return p;
+    }
+    Punto::new(cx + (p.x - cx) * radio / d, cy + (p.y - cy) * radio / d)
 }
 
 /// Prueba hasta `INTENTOS` Variantes (semilla, semilla+1, ...) y devuelve la
@@ -495,5 +549,89 @@ mod tests {
         assert!(elegir_variante(&c).cumple);
         let c = vec![vec![29, 91]];
         assert!(!elegir_variante(&c).cumple);
+    }
+
+    /// Distancia de `p` (dentro de `r`) al contorno de `r` con esquinas de `radio`.
+    fn distancia_al_contorno(p: Punto, r: Rect, radio: f64) -> f64 {
+        let radio = radio.min(r.ancho.min(r.alto) / 2.0);
+        let cx = p.x.clamp(r.x + radio, r.x + r.ancho - radio);
+        let cy = p.y.clamp(r.y + radio, r.y + r.alto - radio);
+        if radio > 0.0 && cx != p.x && cy != p.y {
+            return ((p.x - cx).hypot(p.y - cy) - radio).abs();
+        }
+        let lados = [
+            p.x - r.x,
+            r.x + r.ancho - p.x,
+            p.y - r.y,
+            r.y + r.alto - p.y,
+        ];
+        lados.into_iter().fold(f64::MAX, f64::min)
+    }
+
+    /// Una Ilustración transparente: sin Silueta rectangular no tiene figura.
+    fn png_transparente(ancho: u32, alto: u32) -> Ilustracion {
+        let img = image::RgbaImage::new(ancho, alto);
+        let mut b = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut b), image::ImageFormat::Png)
+            .unwrap();
+        Ilustracion::desde_bytes(b, Formato::Png).unwrap()
+    }
+
+    #[test]
+    fn silueta_rectangular_ignora_la_figura_y_sigue_el_borde_de_la_ilustracion() {
+        let il = png_transparente(300, 200);
+        let p = Parametros {
+            margen_mm: 5.0,
+            ..Parametros::default()
+        };
+        assert!(generar(&il, &p).is_err());
+        let r = generar(
+            &il,
+            &Parametros {
+                silueta_rectangular: true,
+                ..p
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            r.silueta,
+            vec![rectangulo_redondeado(r.ilustracion_en, 0.0)]
+        );
+        assert!((r.ilustracion_en.ancho - p.ancho_mm).abs() < 1e-9);
+        let caja = caja_de(&r.silueta).unwrap();
+        assert!((caja.alto - p.ancho_mm * 200.0 / 300.0).abs() < r.mm_por_px);
+        assert_eq!(areas_por_pieza(&r.etiquetas, p.piezas).len(), p.piezas);
+    }
+
+    #[test]
+    fn las_uniones_llegan_justo_a_la_silueta_rectangular() {
+        let il = png_transparente(300, 200);
+        for radio in [0.0, 12.0, 100.0] {
+            for semilla in 0..2 {
+                let p = Parametros {
+                    piezas: 6,
+                    semilla,
+                    silueta_rectangular: true,
+                    esquinas_redondeadas: true,
+                    radio_esquinas_mm: radio,
+                    ..Parametros::default()
+                };
+                let r = generar(&il, &p).unwrap();
+                let franja = 2.5 * r.mm_por_px;
+                let mut en_silueta = 0;
+                for u in &r.uniones {
+                    let fin = u.puntos().last().unwrap();
+                    for q in [u.inicio, fin] {
+                        let d = distancia_al_contorno(q, r.ilustracion_en, radio);
+                        assert!(
+                            d < 1e-6 || d > franja,
+                            "radio {radio}, semilla {semilla}: extremo {q:?} a {d} mm"
+                        );
+                        en_silueta += usize::from(d < 1e-6);
+                    }
+                }
+                assert!(en_silueta > 0);
+            }
+        }
     }
 }

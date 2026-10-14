@@ -36,6 +36,12 @@ struct Args {
     /// Semilla de la Variante
     #[arg(long, default_value_t = Parametros::default().semilla)]
     semilla: u64,
+    /// La Silueta es el borde de la Ilustración entera (ignora Umbral y Margen)
+    #[arg(long)]
+    rectangular: bool,
+    /// Con --rectangular, redondea las esquinas con este radio, en mm
+    #[arg(long, requires = "rectangular")]
+    radio_esquinas: Option<f64>,
     /// Archivo SVG de salida
     #[arg(short = 'o', long)]
     salida: Option<PathBuf>,
@@ -84,6 +90,11 @@ fn main() -> Result<()> {
         tamano_pestana: args.pestana,
         jitter: args.jitter,
         semilla: args.semilla,
+        silueta_rectangular: args.rectangular,
+        esquinas_redondeadas: args.radio_esquinas.is_some(),
+        radio_esquinas_mm: args
+            .radio_esquinas
+            .unwrap_or(Parametros::default().radio_esquinas_mm),
     };
     let r = generar(&ilustracion, &parametros)?;
     std::fs::write(&salida, exportar_svg(&r, &ilustracion))
@@ -139,6 +150,10 @@ mod tests {
         );
         assert!(Args::try_parse_from(["x", "g.png", "--piezas", "1"]).is_err());
         assert!(Args::try_parse_from(["x", "g.png", "--piezas", "13"]).is_err());
+        let r =
+            Args::try_parse_from(["x", "g.png", "--rectangular", "--radio-esquinas", "6"]).unwrap();
+        assert_eq!((r.rectangular, r.radio_esquinas), (true, Some(6.0)));
+        assert!(Args::try_parse_from(["x", "g.png", "--radio-esquinas", "6"]).is_err());
         let d = Args::try_parse_from(["x"]).unwrap();
         assert_eq!(d.piezas as usize, Parametros::default().piezas);
     }

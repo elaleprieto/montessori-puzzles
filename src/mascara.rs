@@ -172,6 +172,26 @@ impl Mascara {
         Ok(m)
     }
 
+    /// Toda la Ilustración (`ancho` × `alto` px) como figura, a `relleno_px`
+    /// del borde y con las esquinas redondeadas con `radio_px` (0 da esquinas
+    /// rectas). Un píxel es figura si su centro cae dentro.
+    pub fn rectangulo(ancho: usize, alto: usize, relleno_px: usize, radio_px: f64) -> Self {
+        let (w, h) = (ancho as f64, alto as f64);
+        let radio = radio_px.clamp(0.0, w.min(h) / 2.0);
+        let mut m = Self::vacia(ancho + 2 * relleno_px, alto + 2 * relleno_px);
+        for y in 0..alto {
+            for x in 0..ancho {
+                let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
+                // Distancia a la zona sin recortar, que es el rectángulo
+                // achicado `radio` por lado.
+                let dx = (radio - px).max(px - (w - radio)).max(0.0);
+                let dy = (radio - py).max(py - (h - radio)).max(0.0);
+                m.set(x + relleno_px, y + relleno_px, dx.hypot(dy) <= radio);
+            }
+        }
+        m
+    }
+
     /// Se queda con la componente conexa más grande y rellena sus huecos.
     pub fn figura_principal(&self) -> Self {
         let n = self.datos.len();
@@ -341,6 +361,39 @@ mod tests {
         let il = Ilustracion::desde_bytes(svg.to_vec(), Formato::Svg).unwrap();
         let m = Mascara::desde_ilustracion(&il, 128, 200, 0).unwrap();
         assert!(m.datos.iter().filter(|&&b| b).count() > 500);
+    }
+
+    #[test]
+    fn rectangulo_con_esquinas_rectas_es_todo_figura_dentro_del_relleno() {
+        let m = Mascara::rectangulo(10, 6, 2, 0.0);
+        assert_eq!((m.ancho, m.alto), (14, 10));
+        for y in 0..m.alto {
+            for x in 0..m.ancho {
+                let dentro = (2..12).contains(&x) && (2..8).contains(&y);
+                assert_eq!(m.get(x, y), dentro, "({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn rectangulo_redondeado_recorta_las_esquinas() {
+        let m = Mascara::rectangulo(40, 30, 1, 10.0);
+        // Las cuatro esquinas quedan fuera; los centros de los lados, dentro.
+        for (x, y) in [(1, 1), (40, 1), (1, 30), (40, 30)] {
+            assert!(!m.get(x, y), "esquina ({x}, {y})");
+        }
+        for (x, y) in [(20, 1), (1, 15), (40, 15), (20, 30)] {
+            assert!(m.get(x, y), "lado ({x}, {y})");
+        }
+        // Cerca del centro de giro de la esquina, dentro.
+        assert!(m.get(1 + 4, 1 + 4));
+        // Simétrica.
+        for y in 0..m.alto {
+            for x in 0..m.ancho {
+                assert_eq!(m.get(x, y), m.get(m.ancho - 1 - x, y));
+                assert_eq!(m.get(x, y), m.get(x, m.alto - 1 - y));
+            }
+        }
     }
 
     fn codificar(img: &RgbaImage, fmt: ImageFormat) -> Vec<u8> {

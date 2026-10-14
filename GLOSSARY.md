@@ -11,8 +11,12 @@ La imagen que carga el usuario (PNG, JPG o SVG) con una figura sobre fondo trans
 _Avoid_: foto, dibujo, input
 
 **Silueta**:
-El contorno exterior de la figura de la Ilustración, separado del fondo. Es el borde exterior del Rompecabezas.
+El contorno exterior de la figura de la Ilustración, separado del fondo (o, con Silueta rectangular, el de la Ilustración entera). Es el borde exterior del Rompecabezas.
 _Avoid_: outline, borde, máscara
+
+**Silueta rectangular**:
+La Silueta que sigue el borde de la Ilustración entera en lugar del de la figura, para escenas que llenan la imagen. No usa Umbral ni Margen; sus esquinas pueden ir redondeadas con un mismo radio en mm.
+_Avoid_: marco, recuadro, modo rectángulo
 
 **Umbral**:
 El valor que decide qué parte de la Ilustración es figura y qué parte es fondo al detectar la Silueta.
