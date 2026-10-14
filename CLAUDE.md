@@ -6,4 +6,5 @@ App de escritorio en Rust (egui) que convierte una Ilustración en un rompecabez
 - Decisiones de arquitectura en `docs/adr/`; ideas fuera de alcance en `docs/roadmap.md`.
 - El núcleo (`src/lib.rs` y sus módulos) no depende de la UI y se testea sin ventana. Tests unitarios en `#[cfg(test)] mod tests` del mismo módulo, con figuras sintéticas generadas en código.
 - Chequeo completo antes de commitear: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`.
+- Reinstalar la app en `/Applications` después de cambios: `scripts/instalar-app.sh` (borra `target/` al terminar; `--conservar-target` para mantenerlo).
 - Commit messages: `<type>: <resumen>` en español, sin trailers de atribución.
